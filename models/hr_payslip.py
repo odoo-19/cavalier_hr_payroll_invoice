@@ -43,18 +43,22 @@ class HrPayslip(models.Model):
                 self.location_id = False
 
     def _get_overlapping_work_entries(self):
-        """Return work entries for the payslip's employee overlapping the payslip period."""
+        """Return work entries for the payslip's employee overlapping the payslip period.
+
+        Note: In Odoo 19 hr_work_entry, the work entry date range is represented by a single
+        date field (`date`) + duration, not `date_start/date_stop`.
+        """
         self.ensure_one()
         if not self.employee_id or not self.date_from or not self.date_to:
             return self.env["hr.work.entry"]
-        # date_from/date_to are dates; work entries are datetimes.
-        dt_from = fields.Datetime.to_datetime(f"{self.date_from} 00:00:00")
-        dt_to = fields.Datetime.to_datetime(f"{self.date_to} 23:59:59")
-        return self.env["hr.work.entry"].search([
+
+        domain = [
             ("employee_id", "=", self.employee_id.id),
-            ("date_start", "<=", dt_to),
-            ("date_stop", ">=", dt_from),
-        ])
+            ("date", ">=", self.date_from),
+            ("date", "<=", self.date_to),
+            ("state", "!=", "cancelled"),
+        ]
+        return self.env["hr.work.entry"].search(domain)
 
     def _set_customer_location_from_work_entries(self):
         """Populate customer/location from work entries when the period is consistent.

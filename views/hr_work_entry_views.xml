@@ -7,7 +7,7 @@
         <field name="arch" type="xml">
             <!-- Insert fields right after Work Entry Type to ensure visibility in all form variants -->
             <xpath expr="//field[@name='work_entry_type_id']" position="after">
-                    <field name="customer_id"/>
+                <field name="customer_id"/>
                 <field name="location_id" domain="customer_id and [('id', 'child_of', customer_id)] or []"/>
             </xpath>
         </field>
