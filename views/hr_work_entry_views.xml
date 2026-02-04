@@ -5,11 +5,10 @@
         <field name="model">hr.work.entry</field>
         <field name="inherit_id" ref="hr_work_entry.hr_work_entry_view_form"/>
         <field name="arch" type="xml">
-            <xpath expr="//sheet//group" position="inside">
-                <group string="Billing">
+            <!-- Insert fields right after Work Entry Type to ensure visibility in all form variants -->
+            <xpath expr="//field[@name='work_entry_type_id']" position="after">
                     <field name="customer_id"/>
-                    <field name="location_id" domain="customer_id and [('id','child_of', customer_id)] or []"/>
-                </group>
+                <field name="location_id" domain="customer_id and [('id', 'child_of', customer_id)] or []"/>
             </xpath>
         </field>
     </record>
