@@ -2,7 +2,7 @@
 {
     "name": "Cavalier Payroll Invoicing",
     "summary": "Create customer invoices from payroll payslips (date range, customer, location)",
-    "version": "19.0.1.0.5",
+    "version": "19.0.1.1.0",
     "category": "Human Resources/Payroll",
     "author": "Cavalier Security / Obanana Corp",
     "license": "LGPL-3",

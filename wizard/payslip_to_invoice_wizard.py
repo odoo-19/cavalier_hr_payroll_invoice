@@ -8,6 +8,7 @@ class HrPayslipToInvoiceWizard(models.TransientModel):
 
     date_from = fields.Date(required=True)
     date_to = fields.Date(required=True)
+    payslip_ids = fields.Many2many('hr.payslip', string='Payslips', readonly=True)
     customer_id = fields.Many2one("res.partner", string="Customer", required=True)
     location_id = fields.Many2one(
         "res.partner",
