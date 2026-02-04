@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from odoo import api, fields, models
 
+
 class HrWorkEntry(models.Model):
     _inherit = "hr.work.entry"
 
@@ -13,59 +14,72 @@ class HrWorkEntry(models.Model):
     location_id = fields.Many2one(
         "res.partner",
         string="Location",
-        help="Customer location / site related to this work entry.",
+        help="Customer location / site (res.partner) related to this work entry.",
     )
 
+    # -------------------------------------------------------------------------
+    # Onchanges
+    # -------------------------------------------------------------------------
     @api.onchange("customer_id")
     def _onchange_customer_id_clear_location(self):
         for rec in self:
             if rec.customer_id and rec.location_id:
-                # If location is not under customer hierarchy, clear it.
+                # Only allow locations within customer's hierarchy.
                 if rec.location_id != rec.customer_id and rec.location_id not in rec.customer_id.child_ids:
                     rec.location_id = False
+
+    @api.onchange("employee_id", "date")
+    def _onchange_employee_or_date_fill_customer_location(self):
+        for rec in self:
+            if rec.employee_id and rec.date and (not rec.customer_id or not rec.location_id):
+                rec._apply_customer_location_from_work_location()
 
     # -------------------------------------------------------------------------
     # Helpers
     # -------------------------------------------------------------------------
     def _get_employee_work_location_for_date(self, employee, work_date):
-        """Return hr.work.location for an employee and date.
+        """Return hr.work.location for an employee on a given date.
 
-        We support different field names across builds by checking which fields
-        exist on hr.employee.
+        Deterministic for your build (hr_homeworking):
+        1) exceptional_location_id (if field exists and is set)
+        2) <weekday>_location_id (monday_location_id .. sunday_location_id) (if exists and set)
+        3) work_location_id fallback (if exists and set)
         """
         if not employee or not work_date:
             return self.env["hr.work.location"]
 
-        # Ensure date object
         work_date = fields.Date.to_date(work_date)
+        if not work_date:
+            return self.env["hr.work.location"]
 
-        # Prefer per-weekday "Usual Work Location" fields if present.
-        # User described fields Monday..Sunday. Common naming patterns are:
-        # - usual_work_location_id_monday ... _sunday
-        # - usual_work_location_monday_id ... _sunday_id
-        day = work_date.weekday()  # 0=Mon
-        day_names = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-        dname = day_names[day]
+        # 1) Exceptional location (one-off override)
+        if "exceptional_location_id" in employee._fields and employee.exceptional_location_id:
+            return employee.exceptional_location_id
 
-        candidates = [
-            f"usual_work_location_id_{dname}",
-            f"usual_work_location_{dname}_id",
-            f"usual_work_location_{dname}",
-        ]
-        for fname in candidates:
-            if fname in employee._fields:
-                val = employee[fname]
-                if val:
-                    return val
+        # 2) Weekday usual location
+        weekday_map = {
+            0: "monday_location_id",
+            1: "tuesday_location_id",
+            2: "wednesday_location_id",
+            3: "thursday_location_id",
+            4: "friday_location_id",
+            5: "saturday_location_id",
+            6: "sunday_location_id",
+        }
+        fname = weekday_map.get(work_date.weekday())
+        if fname and fname in employee._fields:
+            val = employee[fname]
+            if val:
+                return val
 
-        # Fallback to generic work location
+        # 3) Generic work location fallback
         if "work_location_id" in employee._fields and employee.work_location_id:
             return employee.work_location_id
 
         return self.env["hr.work.location"]
 
     def _apply_customer_location_from_work_location(self):
-        """Populate customer/location on work entries based on hr.work.location mapping."""
+        """Populate customer/location based on the employee's work location mapping."""
         for rec in self:
             if not rec.employee_id or not rec.date:
                 continue
@@ -93,9 +107,3 @@ class HrWorkEntry(models.Model):
         # Auto-populate billing fields after generation/import if not provided.
         records.filtered(lambda r: not r.customer_id or not r.location_id)._apply_customer_location_from_work_location()
         return records
-
-    @api.onchange("employee_id", "date")
-    def _onchange_employee_or_date_fill_customer_location(self):
-        for rec in self:
-            if rec.employee_id and rec.date and (not rec.customer_id or not rec.location_id):
-                rec._apply_customer_location_from_work_location()
