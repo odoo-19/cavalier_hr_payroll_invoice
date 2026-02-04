@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+
+        <!-- Extend Work Location (hr.work.location) list view -->
+        <record id="view_hr_work_location_tree_inherit_cavalier_billing" model="ir.ui.view">
+            <field name="name">hr.work.location.view.list.inherit.cavalier.billing</field>
+            <field name="model">hr.work.location</field>
+            <field name="inherit_id" ref="hr.hr_work_location_tree_view"/>
+            <field name="arch" type="xml">
+                <xpath expr="//list" position="inside">
+                    <field name="customer_id"/>
+                    <field name="location_id"/>
+                </xpath>
+            </field>
+        </record>
+
+        <!-- Extend Work Location (hr.work.location) form view -->
+        <record id="view_hr_work_location_form_inherit_cavalier_billing" model="ir.ui.view">
+            <field name="name">hr.work.location.view.form.inherit.cavalier.billing</field>
+            <field name="model">hr.work.location</field>
+            <field name="inherit_id" ref="hr.hr_work_location_form_view"/>
+            <field name="arch" type="xml">
+                <xpath expr="//field[@name='address_id']" position="after">
+                    <field name="customer_id"/>
+                    <field name="location_id" domain="customer_id and [('id', 'child_of', customer_id)] or []"/>
+                </xpath>
+            </field>
+        </record>
+
+    </data>
+</odoo>
