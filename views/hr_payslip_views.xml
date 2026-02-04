@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hr_payslip_form_inherit_cavalier_invoice" model="ir.ui.view">
+        <field name="name">hr.payslip.form.inherit.cavalier.invoice</field>
+        <field name="model">hr.payslip</field>
+        <field name="inherit_id" ref="hr_payroll.view_hr_payslip_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//sheet//group" position="inside">
+                <group string="Billing">
+                    <field name="customer_id"/>
+                    <field name="location_id"
+                           domain="customer_id and [('id', 'child_of', customer_id)] or []"/>
+                    <field name="invoice_id" invisible="1"/>
+                </group>
+            </xpath>
+
+            <xpath expr="//header" position="inside">
+                <button name="action_view_customer_invoice"
+                        type="object"
+                        string="Invoice"
+                        class="oe_stat_button"
+                        icon="fa-file-text-o"
+                        invisible="not invoice_id"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>
