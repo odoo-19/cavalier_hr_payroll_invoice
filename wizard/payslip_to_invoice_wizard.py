@@ -48,14 +48,84 @@ class HrPayslipToInvoiceWizard(models.TransientModel):
             if self.location_id != self.customer_id and self.location_id not in self.customer_id.child_ids:
                 self.location_id = False
 
+    @api.onchange("payslip_ids")
+    def _onchange_payslip_ids_autofill(self):
+        if not self.payslip_ids:
+            return
+
+        slips = self.payslip_ids
+
+        # auto dates
+        self.date_from = min(slips.mapped("date_from"))
+        self.date_to = max(slips.mapped("date_to"))
+
+        # auto customer if consistent
+        customers = slips.mapped("customer_id").filtered(lambda p: p)
+        self.customer_id = customers[0] if customers and len(customers) == 1 else False
+
+        # auto location if consistent
+        locations = slips.mapped("location_id").filtered(lambda p: p)
+        self.location_id = locations[0] if locations and len(locations) == 1 else False
+
+
     @api.model
     def default_get(self, fields_list):
         res = super().default_get(fields_list)
+
+        # Existing defaults
         company = self.env.company
         if "journal_id" in fields_list and not res.get("journal_id"):
-            res["journal_id"] = company.payroll_billing_journal_id.id or self.env["account.journal"].search([("type", "=", "sale"), ("company_id", "=", company.id)], limit=1).id
+            res["journal_id"] = (
+                company.payroll_billing_journal_id.id
+                or self.env["account.journal"].search(
+                    [("type", "=", "sale"), ("company_id", "=", company.id)],
+                    limit=1
+                ).id
+            )
         if "product_id" in fields_list and not res.get("product_id"):
-            res["product_id"] = company.payroll_billing_product_id.id or self.env["product.product"].search([("name", "ilike", "Payroll"), ("company_id", "in", [company.id, False])], limit=1).id
+            res["product_id"] = (
+                company.payroll_billing_product_id.id
+                or self.env["product.product"].search(
+                    [("name", "ilike", "Payroll"), ("company_id", "in", [company.id, False])],
+                    limit=1
+                ).id
+            )
+
+        # ✅ NEW: derive defaults from selected payslips (active_ids)
+        active_ids = self.env.context.get("active_ids") or []
+        if not active_ids:
+            return res
+
+        slips = self.env["hr.payslip"].browse(active_ids).exists()
+        if not slips:
+            return res
+
+        # Optional safety: ensure single company selection
+        companies = slips.mapped("company_id")
+        if len(companies) > 1:
+            raise UserError(_("Please select payslips from only ONE company."))
+
+        if "payslip_ids" in fields_list and not res.get("payslip_ids"):
+            res["payslip_ids"] = [(6, 0, slips.ids)]
+
+        # Dates: if all same, keep exact; else take min/max
+        if "date_from" in fields_list and not res.get("date_from"):
+            res["date_from"] = min(slips.mapped("date_from"))
+        if "date_to" in fields_list and not res.get("date_to"):
+            res["date_to"] = max(slips.mapped("date_to"))
+
+        # Customer: only set if all slips share the same customer
+        customers = slips.mapped("customer_id").filtered(lambda p: p)
+        if "customer_id" in fields_list and not res.get("customer_id"):
+            if customers and len(customers) == 1:
+                res["customer_id"] = customers.id  # recordset -> id
+
+        # Location: only set if all slips share the same location
+        locations = slips.mapped("location_id").filtered(lambda p: p)
+        if "location_id" in fields_list and not res.get("location_id"):
+            if locations and len(locations) == 1:
+                res["location_id"] = locations.id
+
         return res
 
     def _get_payslip_domain(self):
