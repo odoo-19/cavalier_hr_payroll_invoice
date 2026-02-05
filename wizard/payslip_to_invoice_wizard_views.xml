@@ -1,12 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
+
+    <!-- Wizard Form View -->
     <record id="view_hr_payslip_to_invoice_wizard_form" model="ir.ui.view">
         <field name="name">hr.payslip.to.invoice.wizard.form</field>
         <field name="model">hr.payslip.to.invoice.wizard</field>
         <field name="arch" type="xml">
             <form string="Create Invoice from Payslips">
                 <group>
-                <field name="payslip_ids" widget="many2many_tags" readonly="1"/>
+                    <field name="payslip_ids" widget="many2many_tags" readonly="1"/>
                     <group>
                         <field name="date_from"/>
                         <field name="date_to"/>
@@ -14,7 +16,8 @@
                     </group>
                     <group>
                         <field name="customer_id"/>
-                        <field name="location_id" domain="customer_id and [('id', 'child_of', customer_id)] or []"/>
+                        <field name="location_id"
+                               domain="customer_id and [('id', 'child_of', customer_id)] or []"/>
                     </group>
                 </group>
 
@@ -37,16 +40,30 @@
         </field>
     </record>
 
-    <record id="action_hr_payslip_to_invoice_wizard" model="ir.actions.act_window">
-        <field name="name">Create Invoice from Payslips</field>
+    <!-- Action for Payslip list "Actions" (Gear) -->
+    <!-- Fix 1: Use Many2many command format for defaults -->
+    <record id="action_hr_payslip_to_invoice_wizard_from_selection" model="ir.actions.act_window">
+        <field name="name">Create Invoice from Selected Payslips</field>
         <field name="res_model">hr.payslip.to.invoice.wizard</field>
         <field name="binding_model_id" ref="hr_payroll.model_hr_payslip"/>
         <field name="binding_view_types">list,form</field>
-        <field name="context">{'default_payslip_ids': context.get('active_ids', [])}</field>
+        <field name="context">{'default_payslip_ids': [(6, 0, context.get('active_ids', []))]}</field>
         <field name="view_mode">form</field>
         <field name="target">new</field>
     </record>
 
+    <!-- Standalone Action for Menu (no selection) -->
+    <!-- This allows using domain search in Python when payslip_ids is empty -->
+    <record id="action_hr_payslip_to_invoice_wizard_menu" model="ir.actions.act_window">
+        <field name="name">Create Invoice from Payslips</field>
+        <field name="res_model">hr.payslip.to.invoice.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+        <!-- No binding_model_id, and no default_payslip_ids -->
+        <field name="context">{}</field>
+    </record>
+
+    <!-- Menus -->
     <menuitem id="menu_cavalier_payroll_invoicing_root"
               name="Payroll Invoicing"
               parent="account.menu_finance"
@@ -55,7 +72,7 @@
     <menuitem id="menu_hr_payslip_to_invoice_wizard"
               name="Create Invoice from Payslips"
               parent="menu_cavalier_payroll_invoicing_root"
-              action="action_hr_payslip_to_invoice_wizard"
+              action="action_hr_payslip_to_invoice_wizard_menu"
               sequence="10"/>
 
 </odoo>

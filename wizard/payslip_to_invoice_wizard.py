@@ -2,20 +2,24 @@
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
 
+
 class HrPayslipToInvoiceWizard(models.TransientModel):
     _name = "hr.payslip.to.invoice.wizard"
     _description = "Create Customer Invoice from Payslips"
 
     date_from = fields.Date(required=True)
     date_to = fields.Date(required=True)
-    payslip_ids = fields.Many2many('hr.payslip', string='Payslips', readonly=True)
+    payslip_ids = fields.Many2many("hr.payslip", string="Payslips", readonly=True)
+
     customer_id = fields.Many2one("res.partner", string="Customer", required=True)
     location_id = fields.Many2one(
         "res.partner",
         string="Location",
         help="Optional. If set, only payslips for this location are included.",
     )
+
     invoice_date = fields.Date(default=fields.Date.context_today, required=True)
+
     journal_id = fields.Many2one(
         "account.journal",
         domain=[("type", "=", "sale")],
@@ -27,6 +31,7 @@ class HrPayslipToInvoiceWizard(models.TransientModel):
         required=True,
         help="Product used on invoice lines. Configure its income account properly.",
     )
+
     invoice_basis = fields.Selection(
         [
             ("employer_cost", "Employer Cost"),
@@ -37,6 +42,7 @@ class HrPayslipToInvoiceWizard(models.TransientModel):
         required=True,
         help="Which payslip amount to bill.",
     )
+
     group_by_employee = fields.Boolean(
         default=False,
         help="If enabled, creates one invoice line per employee (summed over the selected payslips).",
@@ -67,31 +73,31 @@ class HrPayslipToInvoiceWizard(models.TransientModel):
         locations = slips.mapped("location_id").filtered(lambda p: p)
         self.location_id = locations[0] if locations and len(locations) == 1 else False
 
-
     @api.model
     def default_get(self, fields_list):
         res = super().default_get(fields_list)
+        company = self.env.company
 
         # Existing defaults
-        company = self.env.company
-        if "journal_id" in fields_list and not res.get("journal_id"):
+        if not res.get("journal_id"):
             res["journal_id"] = (
                 company.payroll_billing_journal_id.id
                 or self.env["account.journal"].search(
                     [("type", "=", "sale"), ("company_id", "=", company.id)],
-                    limit=1
+                    limit=1,
                 ).id
             )
-        if "product_id" in fields_list and not res.get("product_id"):
+
+        if not res.get("product_id"):
             res["product_id"] = (
                 company.payroll_billing_product_id.id
                 or self.env["product.product"].search(
                     [("name", "ilike", "Payroll"), ("company_id", "in", [company.id, False])],
-                    limit=1
+                    limit=1,
                 ).id
             )
 
-        # ✅ NEW: derive defaults from selected payslips (active_ids)
+        # Derive defaults from selected payslips (active_ids)
         active_ids = self.env.context.get("active_ids") or []
         if not active_ids:
             return res
@@ -100,29 +106,29 @@ class HrPayslipToInvoiceWizard(models.TransientModel):
         if not slips:
             return res
 
-        # Optional safety: ensure single company selection
+        # Safety: ensure single company selection
         companies = slips.mapped("company_id")
         if len(companies) > 1:
             raise UserError(_("Please select payslips from only ONE company."))
 
-        if "payslip_ids" in fields_list and not res.get("payslip_ids"):
-            res["payslip_ids"] = [(6, 0, slips.ids)]
+        # Always set payslip_ids (do not depend on fields_list)
+        res["payslip_ids"] = [(6, 0, slips.ids)]
 
-        # Dates: if all same, keep exact; else take min/max
-        if "date_from" in fields_list and not res.get("date_from"):
+        # Dates: min/max
+        if not res.get("date_from"):
             res["date_from"] = min(slips.mapped("date_from"))
-        if "date_to" in fields_list and not res.get("date_to"):
+        if not res.get("date_to"):
             res["date_to"] = max(slips.mapped("date_to"))
 
         # Customer: only set if all slips share the same customer
         customers = slips.mapped("customer_id").filtered(lambda p: p)
-        if "customer_id" in fields_list and not res.get("customer_id"):
+        if not res.get("customer_id"):
             if customers and len(customers) == 1:
-                res["customer_id"] = customers.id  # recordset -> id
+                res["customer_id"] = customers.id
 
         # Location: only set if all slips share the same location
         locations = slips.mapped("location_id").filtered(lambda p: p)
-        if "location_id" in fields_list and not res.get("location_id"):
+        if not res.get("location_id"):
             if locations and len(locations) == 1:
                 res["location_id"] = locations.id
 
@@ -158,9 +164,44 @@ class HrPayslipToInvoiceWizard(models.TransientModel):
         if not self.journal_id:
             raise UserError(_("Please select a sales journal."))
 
-        slips = self.env["hr.payslip"].search(self._get_payslip_domain(), order="employee_id, date_from, id")
+        # ✅ Invoice exactly what the user selected (if provided)
+        slips = self.payslip_ids
+
+        # If wizard was launched from a payslip list selection, do NOT fallback to domain search.
+        active_ids = self.env.context.get("active_ids") or []
+        if active_ids and not slips:
+            raise UserError(_("No payslips were carried into the wizard. Please relaunch from your selection."))
+
+        # Only allow domain search when not launched from a selection (e.g., opened from menu)
         if not slips:
-            raise UserError(_("No eligible payslips found for the given filters (state must be Validated/Paid and not yet invoiced)."))
+            slips = self.env["hr.payslip"].search(self._get_payslip_domain(), order="employee_id, date_from, id")
+            if not slips:
+                raise UserError(
+                    _("No eligible payslips found for the given filters (state must be Validated/Paid and not yet invoiced).")
+                )
+
+        # ✅ Enforce eligibility rules even for manually selected payslips
+        bad_state = slips.filtered(lambda s: s.state not in ("validated", "paid"))
+        if bad_state:
+            raise UserError(_("Some selected payslips are not Validated/Paid."))
+
+        already_invoiced = slips.filtered(lambda s: s.invoice_id)
+        if already_invoiced:
+            raise UserError(_("Some selected payslips are already linked to an invoice."))
+
+        companies = slips.mapped("company_id")
+        if len(companies) != 1 or companies[0] != self.env.company:
+            raise UserError(_("Please select payslips from the active company only."))
+
+        if self.customer_id:
+            bad = slips.filtered(lambda s: s.customer_id != self.customer_id)
+            if bad:
+                raise UserError(_("Some selected payslips have a different customer than the wizard Customer."))
+
+        if self.location_id:
+            bad = slips.filtered(lambda s: s.location_id != self.location_id)
+            if bad:
+                raise UserError(_("Some selected payslips have a different location than the wizard Location."))
 
         # Prepare invoice lines
         lines = []
@@ -169,36 +210,53 @@ class HrPayslipToInvoiceWizard(models.TransientModel):
             for s in slips:
                 grouped.setdefault(s.employee_id, 0.0)
                 grouped[s.employee_id] += self._amount_from_slip(s)
+
             for emp, amount in grouped.items():
                 if not amount:
                     continue
-                lines.append((0, 0, {
-                    "product_id": self.product_id.id,
-                    "name": _("Payroll billing - %(employee)s (%(from)s to %(to)s)") % {
-                        "employee": emp.name,
-                        "from": self.date_from,
-                        "to": self.date_to,
-                    },
-                    "quantity": 1.0,
-                    "price_unit": amount,
-                }))
+                lines.append(
+                    (
+                        0,
+                        0,
+                        {
+                            "product_id": self.product_id.id,
+                            "name": _("Payroll billing - %(employee)s (%(from)s to %(to)s)")
+                            % {
+                                "employee": emp.name,
+                                "from": self.date_from,
+                                "to": self.date_to,
+                            },
+                            "quantity": 1.0,
+                            "price_unit": amount,
+                        },
+                    )
+                )
         else:
             total = sum(self._amount_from_slip(s) for s in slips)
             if not total:
                 raise UserError(_("The computed total is 0. Please check payslip amounts and the selected invoice basis."))
             location_label = self.location_id.display_name if self.location_id else _("All locations")
-            lines.append((0, 0, {
-                "product_id": self.product_id.id,
-                "name": _("Payroll billing - %(customer)s / %(location)s (%(from)s to %(to)s) - %(count)s payslip(s)") % {
-                    "customer": self.customer_id.display_name,
-                    "location": location_label,
-                    "from": self.date_from,
-                    "to": self.date_to,
-                    "count": len(slips),
-                },
-                "quantity": 1.0,
-                "price_unit": total,
-            }))
+            lines.append(
+                (
+                    0,
+                    0,
+                    {
+                        "product_id": self.product_id.id,
+                        "name": _(
+                            "Payroll billing - %(customer)s / %(location)s (%(from)s to %(to)s) - %(count)s payslip(s)"
+                        )
+                        % {
+                            "customer": self.customer_id.display_name,
+                            "location": location_label,
+                            "from": self.date_from,
+                            "to": self.date_to,
+                            "count": len(slips),
+                        },
+                        "quantity": 1.0,
+                        "price_unit": total,
+                    },
+                )
+            )
 
         move_vals = {
             "move_type": "out_invoice",
