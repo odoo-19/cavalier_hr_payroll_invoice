@@ -1,172 +1,111 @@
-# Cavalier Payroll Invoicing – Current State Summary
+# Cavalier HR Payroll Invoicing
 
-_Odoo 19 | Enterprise Payroll–compatible | DTR-driven_
+This module extends **Odoo HR Payroll** to support **customer- and location-based payroll invoicing**, including automatic **payslip splitting by work location** and a flexible **Payslip → Invoice** workflow.
 
----
-
-## 1. Purpose (Big Picture)
-
-This module bridges **HR → Payroll → Invoicing** for **Cavalier Security**, where:
-
-- Guards are assigned to **customer sites**
-- Time is captured via **manual DTR**
-- DTR is imported into **Work Entries**
-- Payroll is computed from Work Entries
-- **Customer invoices are generated from payroll**, traceable down to site and period
-
-Everything is designed to be:
-
-- **Deterministic**
-- **Audit-safe**
-- **Location-accurate**
+It is designed for service-oriented companies where payroll costs must be billed accurately to clients and operational locations.
 
 ---
 
-## 2. Data Model Enhancements
+## Key Features
 
-### A. `hr.work.location` (Single Source of Truth)
+### 1. Payroll-to-Invoice Wizard
 
-Work Locations are extended to carry **billing context**:
+Generate customer invoices directly from validated or paid payslips using a guided wizard.
 
-- `customer_id` → the client (company)
-- `location_id` → the customer’s site / address (`res.partner`)
+**Supported invoice bases:**
+- Gross Wage
+- Employer Cost
+- Net Wage
 
-> **Design decision:**  
-> Billing is defined at the **Work Location** level, not per employee and not per payslip.
-
-This makes site-based billing explicit, reusable, and auditable.
-
----
-
-### B. `hr.work.entry` (DTR → Payroll Backbone)
-
-Each Work Entry now includes:
-
-- `customer_id`
-- `location_id`
-
-These fields are **auto-populated**, not manually maintained.
-
-#### Deterministic location resolution (based on `hr_homeworking`)
-
-For a given **employee + date**, the Work Location is resolved in this order:
-
-1. `exceptional_location_id` (one-off override)
-2. `<weekday>_location_id`  
-   (`monday_location_id`, `tuesday_location_id`, …)
-3. fallback to `work_location_id`
-
-Then the following mappings occur:
-
-- `work_location.customer_id` → Work Entry `customer_id`
-- `work_location.location_id` → Work Entry `location_id`
-
-This logic applies to:
-
-- Work Entry generation
-- CSV imports
-- Manual creation
-
-No heuristics are used — all mappings are explicit and deterministic.
+**Core capabilities:**
+- Select multiple payslips manually or launch the wizard from list view
+- Automatically computes invoice amounts based on the selected basis
+- Prevents invoicing of:
+  - draft or cancelled payslips
+  - already-invoiced payslips
+  - payslips explicitly marked as non-invoiceable
+- Links generated invoices back to the source payslips for traceability
 
 ---
 
-### C. `hr.payslip`
+### 2. Grouping Options (Advanced)
 
-Payslips are extended with:
+The wizard supports two invoicing modes:
 
-- `customer_id`
-- `location_id`
-- `invoice_id` (link to generated invoice)
+- **Single summary line**
+  - Aggregates all selected payslips into one invoice line
 
-During payslip creation (manual or via payroll run):
+- **Group by Employee**
+  - Creates one invoice line per employee
+  - Each line aggregates the selected basis (gross, net, or employer cost) for that employee
 
-- Customer and Location are inferred from **overlapping Work Entries**
-- Values are set **only if consistent** across the payslip period (safe by default)
-
-This preserves data integrity and prevents cross-site contamination.
+This allows flexible billing layouts depending on customer requirements.
 
 ---
 
-## 3. Payroll → Invoice Flow
+### 3. Payslip Splitting by Work Location
 
-### A. Invoice Wizard
+Payslips that contain work entries across multiple locations can be **split automatically**.
 
-A custom wizard is provided under:
+#### Split workflow:
+- A **“Split by Location”** button appears when multiple work locations are detected
+- One child payslip is generated per location
+- Each split payslip:
+  - Computes payroll only from its assigned work entries
+  - Represents a single customer/location combination
+- The original payslip becomes a **base payslip** and is excluded from invoicing
 
-**Accounting → Invoicing → Payroll Invoicing → Create Invoice from Payslips**
+#### Deduction handling:
+- Deduction lines are removed from all split payslips
+- Deductions are reassigned to the split payslip with the **largest employer cost**
+- Ensures deductions are counted once and not duplicated
 
-It supports:
-
-- Date range
-- Customer
-- Location (optional)
-- Invoice basis:
-  - Employer Cost
-  - Gross Wage
-  - Net Wage
-- Launch sources:
-  - Payslip list (batch)
-  - Payslip form
-
-When launched from selected payslips, the wizard auto-fills:
-
-- Customer
-- Location
-- Date range
+If the original payslip was already validated or paid, all generated split payslips are automatically validated as well.
 
 ---
 
-### B. Invoice Generation Rules
+### 4. Location-Scoped Payroll Computation
 
-- Only **validated / paid** payslips are eligible
-- Double invoicing is prevented via `invoice_id`
-- Generates `account.move` records (`out_invoice`)
-- Maintains traceability:
-  - Invoice → Payslip(s)
+Split payslips compute payroll values strictly from their assigned **Work Entries**.
 
----
-
-## 4. UI Enhancements (Carefully Scoped)
-
-### Work Location UI
-
-You can now edit:
-
-- Customer
-- Customer Location
-
-directly on the **Work Location** list and form views.
+This ensures:
+- Worked days, wages, and totals reflect only the relevant location
+- Accurate per-location costing
+- Clean separation for downstream invoicing
 
 ---
 
-### Work Entry UI
+### 5. Controlled Invoice Selection Logic
 
-- Customer and Location fields are visible and editable when needed
-- Views are bound to the **actual core XMLIDs** used in this Odoo 19 build
+When the invoicing wizard is launched from selected payslips:
 
----
+- Only the explicitly selected payslips are processed
+- No automatic expansion of the selection is performed
+- All validation rules still apply (state, invoice status, invoiceable flag)
 
-### Payslip UI
-
-- Added a **Billing** group
-- Added an **Invoice smart button**
-
-All UI changes are:
-
-- Fully **Odoo 17+ compliant** (no `attrs` / `states`)
-- Upgrade-safe and isolated to inherited views
+This guarantees **“what you select is what gets invoiced”**, preventing accidental overbilling.
 
 ---
 
-## 5. What This Enables (Strategically)
+## Typical Use Case
 
-This module now provides:
+1. Payroll is generated and validated as usual
+2. Payslips with multiple work locations are split using **Split by Location**
+3. Eligible payslips are selected
+4. The **Payslip to Invoice** wizard is launched
+5. An invoice is generated per customer, accurately reflecting payroll cost by location and/or employee
 
-- **Site-accurate payroll**
-- **Site-accurate billing**
-- **Full traceability**:  
-  Invoice → Payslip → Work Entry → Work Location → Customer
-- **Deterministic behavior** suitable for audit and compliance
+---
 
-This forms a strong, extensible foundation for **security-industry payroll and billing**, especially for DTR-driven operations.
+## Technical Notes
+
+- Compatible with Odoo HR Payroll and Accounting
+- Does not modify core payroll rules
+- Designed to be additive and safe for existing payroll processes
+- Fully traceable links between payslips and invoices
+
+---
+
+## Status
+
+This module is production-ready and actively used for customer payroll billing workflows.
