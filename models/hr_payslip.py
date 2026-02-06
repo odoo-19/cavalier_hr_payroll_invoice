@@ -236,19 +236,19 @@ class HrPayslip(models.Model):
     # Actions
     # -------------------------------------------------------------------------
     def action_split_by_location(self):
-    """Split selected payslip(s) into multiple payslips by location (allocation-only).
+        """Split selected payslip(s) into multiple payslips by location (allocation-only).
 
-    Less-complicated allocation strategy:
-    - Keep the original payslip generation + computation unchanged.
-    - Detect multiple locations via overlapping work entries.
-    - When splitting:
-        * Create one child payslip per location.
-        * Allocate the base payslip totals proportionally by WORK ENTRY HOURS per location.
-        * Do NOT recompute payroll rules on child slips (these are intended for invoicing allocation).
-    - Mark the base payslip as not invoiceable (so invoicing uses only split slips).
-    """
-    WorkEntry = self.env["hr.work.entry"]
-    new_slips = self.env["hr.payslip"]
+        Less-complicated allocation strategy:
+        - Keep the original payslip generation + computation unchanged.
+        - Detect multiple locations via overlapping work entries.
+        - When splitting:
+            * Create one child payslip per location.
+            * Allocate the base payslip totals proportionally by WORK ENTRY HOURS per location.
+            * Do NOT recompute payroll rules on child slips (these are intended for invoicing allocation).
+        - Mark the base payslip as not invoiceable (so invoicing uses only split slips).
+        """
+        WorkEntry = self.env["hr.work.entry"]
+        new_slips = self.env["hr.payslip"]
 
     def _round(amount):
         # Use currency rounding (2 decimals typically)
