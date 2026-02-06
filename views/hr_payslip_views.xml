@@ -15,9 +15,9 @@
                     <field name="has_multiple_locations" readonly="1" invisible="1"/>
                     <field name="split_needed" readonly="1" invisible="1"/>
                     <field name="split_state" readonly="1"/>
-                    <field name="billing_amount" readonly="1" invisible="split_state != \'split\'"/>
-                    <field name="billing_hours" readonly="1" invisible="split_state != \'split\'"/>
-                    <field name="billing_ratio" readonly="1" invisible="split_state != \'split\'"/>
+                    <field name="billing_amount" readonly="1" invisible="split_state != 'split'"/>
+                    <field name="billing_hours" readonly="1" invisible="split_state != 'split'"/>
+                    <field name="billing_ratio" readonly="1" invisible="split_state != 'split'"/>
                     <field name="split_base_id" readonly="1" invisible="1"/>
                 </group>
             </xpath>
