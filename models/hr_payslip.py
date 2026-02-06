@@ -255,93 +255,93 @@ class HrPayslip(models.Model):
         cur = self.env.company.currency_id
         return cur.round(amount) if cur else round(amount, 2)
 
-    for slip in self:
-        if slip.split_state != "none":
-            continue
+        for slip in self:
+            if slip.split_state != "none":
+                continue
 
-        if slip.invoice_id:
-            raise UserError(_("Cannot split a payslip that is already linked to an invoice."))
+            if slip.invoice_id:
+                raise UserError(_("Cannot split a payslip that is already linked to an invoice."))
 
-        if not slip.employee_id or not slip.date_from or not slip.date_to:
-            raise UserError(_("Payslip must have Employee and Date range before splitting."))
+            if not slip.employee_id or not slip.date_from or not slip.date_to:
+                raise UserError(_("Payslip must have Employee and Date range before splitting."))
 
-        # Ensure base slip is computed so totals exist
-        if not slip.line_ids:
-            slip.compute_sheet()
+            # Ensure base slip is computed so totals exist
+            if not slip.line_ids:
+                slip.compute_sheet()
 
-        # Work entries for the payslip period
-        wes = slip._get_overlapping_work_entries()
-        if not wes:
-            raise UserError(_("No work entries found for this payslip period."))
+            # Work entries for the payslip period
+            wes = slip._get_overlapping_work_entries()
+            if not wes:
+                raise UserError(_("No work entries found for this payslip period."))
 
-        # Require locations on work entries (split by location only)
-        missing_loc = wes.filtered(lambda w: not w.location_id)
-        if missing_loc:
-            raise UserError(_(
-                "Some work entries in this payslip period have no Location. "
-                "Please fix work entries first before splitting."
-            ))
-
-        # If customer is already set on the payslip, ensure work entries don't contain multiple customers
-        if slip.customer_id:
-            cust_ids = set((w.customer_id.id or 0) for w in wes)
-            if len(cust_ids) > 1:
+            # Require locations on work entries (split by location only)
+            missing_loc = wes.filtered(lambda w: not w.location_id)
+            if missing_loc:
                 raise UserError(_(
-                    "Multiple Customers detected in work entries for this period. "
-                    "This split action is configured to split by Location only."
+                    "Some work entries in this payslip period have no Location. "
+                    "Please fix work entries first before splitting."
                 ))
 
-        # Group work entries by location and compute total hours per location
-        groups = {}  # location -> work_entry recordset
-        hours_by_loc = {}  # location -> float hours
-        total_hours = 0.0
+            # If customer is already set on the payslip, ensure work entries don't contain multiple customers
+            if slip.customer_id:
+                cust_ids = set((w.customer_id.id or 0) for w in wes)
+                if len(cust_ids) > 1:
+                    raise UserError(_(
+                        "Multiple Customers detected in work entries for this period. "
+                        "This split action is configured to split by Location only."
+                    ))
 
-        for we in wes:
-            groups.setdefault(we.location_id, WorkEntry)
-            groups[we.location_id] |= we
+            # Group work entries by location and compute total hours per location
+            groups = {}  # location -> work_entry recordset
+            hours_by_loc = {}  # location -> float hours
+            total_hours = 0.0
 
-        if len(groups) <= 1:
-            raise UserError(_("This payslip does not have multiple locations to split."))
+            for we in wes:
+                groups.setdefault(we.location_id, WorkEntry)
+                groups[we.location_id] |= we
 
-        for location, we_set in groups.items():
-            # duration is usually in hours
-            loc_hours = sum((we.duration or 0.0) for we in we_set)
-            hours_by_loc[location] = loc_hours
-            total_hours += loc_hours
+            if len(groups) <= 1:
+                raise UserError(_("This payslip does not have multiple locations to split."))
 
-        if total_hours <= 0:
-            raise UserError(_("Total work entry hours is 0 for this period; cannot split proportionally."))
+            for location, we_set in groups.items():
+                # duration is usually in hours
+                loc_hours = sum((we.duration or 0.0) for we in we_set)
+                hours_by_loc[location] = loc_hours
+                total_hours += loc_hours
 
-        # Base totals to allocate
-        base_net = float(slip.net_wage or 0.0)
-        base_gross = float(slip.gross_wage or 0.0)
-        base_employer = float(slip.employer_cost or 0.0)
+            if total_hours <= 0:
+                raise UserError(_("Total work entry hours is 0 for this period; cannot split proportionally."))
 
-        # Create split slips per location (draft) and allocate amounts
-        split_slips = self.env["hr.payslip"]
+            # Base totals to allocate
+            base_net = float(slip.net_wage or 0.0)
+            base_gross = float(slip.gross_wage or 0.0)
+            base_employer = float(slip.employer_cost or 0.0)
 
-        # Sort locations by hours desc for remainder assignment
-        locs_sorted = sorted(hours_by_loc.items(), key=lambda kv: kv[1], reverse=True)
+            # Create split slips per location (draft) and allocate amounts
+            split_slips = self.env["hr.payslip"]
 
-        # First pass allocations with rounding
-        allocs = []
-        for location, loc_hours in locs_sorted:
-            ratio = (loc_hours / total_hours) if total_hours else 0.0
-            allocs.append({
-                "location": location,
-                "we_set": groups[location],
-                "ratio": ratio,
-                "net": _round(base_net * ratio),
-                "gross": _round(base_gross * ratio),
-                "employer": _round(base_employer * ratio),
-            })
+            # Sort locations by hours desc for remainder assignment
+            locs_sorted = sorted(hours_by_loc.items(), key=lambda kv: kv[1], reverse=True)
 
-        # Fix rounding remainders so totals match base exactly
-        def _fix_remainder(field, base_total):
-            s = sum(a[field] for a in allocs)
-            diff = _round(base_total - s)
-            if allocs and diff:
-                allocs[0][field] = _round(allocs[0][field] + diff)
+            # First pass allocations with rounding
+            allocs = []
+            for location, loc_hours in locs_sorted:
+                ratio = (loc_hours / total_hours) if total_hours else 0.0
+                allocs.append({
+                    "location": location,
+                    "we_set": groups[location],
+                    "ratio": ratio,
+                    "net": _round(base_net * ratio),
+                    "gross": _round(base_gross * ratio),
+                    "employer": _round(base_employer * ratio),
+                })
+
+    # Fix rounding remainders so totals match base exactly
+    def _fix_remainder(field, base_total):
+        s = sum(a[field] for a in allocs)
+        diff = _round(base_total - s)
+        if allocs and diff:
+            allocs[0][field] = _round(allocs[0][field] + diff)
 
         _fix_remainder("net", base_net)
         _fix_remainder("gross", base_gross)
@@ -379,16 +379,16 @@ class HrPayslip(models.Model):
 
         new_slips |= slip.split_child_ids
 
-    if new_slips:
-        return {
-            "type": "ir.actions.act_window",
-            "name": _("Split Payslips"),
-            "res_model": "hr.payslip",
-            "view_mode": "list,form",
-            "domain": [("id", "in", new_slips.ids)],
-            "target": "current",
-        }
-    return True
+        if new_slips:
+            return {
+                "type": "ir.actions.act_window",
+                "name": _("Split Payslips"),
+                "res_model": "hr.payslip",
+                "view_mode": "list,form",
+                "domain": [("id", "in", new_slips.ids)],
+                "target": "current",
+            }
+        return True
 
     def action_view_customer_invoice(self):
         self.ensure_one()
