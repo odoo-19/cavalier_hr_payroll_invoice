@@ -344,3 +344,14 @@ class HrPayslip(models.Model):
 
         # Refresh the UI so user sees created split slips immediately
         return {"type": "ir.actions.client", "tag": "reload"}
+    def action_view_customer_invoice(self):
+        self.ensure_one()
+        if not self.invoice_id:
+            raise UserError(_("No invoice is linked to this payslip."))
+        return {
+            "type": "ir.actions.act_window",
+            "name": _("Customer Invoice"),
+            "res_model": "account.move",
+            "view_mode": "form",
+            "res_id": self.invoice_id.id,
+        }
