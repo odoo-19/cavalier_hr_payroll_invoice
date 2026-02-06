@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
-from odoo.osv import expression
+from odoo.fields import Domain
 
 class HrPayslip(models.Model):
     _inherit = "hr.payslip"
@@ -170,7 +170,7 @@ class HrPayslip(models.Model):
         """Scope worked days computation to work_entry_ids when splitting."""
         self.ensure_one()
         if self.work_entry_ids:
-            domain = expression.AND([domain or [], [("id", "in", self.work_entry_ids.ids)]])
+            domain = Domain.AND([domain or [], [("id", "in", self.work_entry_ids.ids)]])
         return super()._get_worked_day_lines_values(domain=domain)
 
 
