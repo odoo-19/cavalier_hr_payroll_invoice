@@ -150,18 +150,6 @@ class HrPayslipToInvoiceWizard(models.TransientModel):
         return domain
 
     def _amount_from_slip(self, slip):
-        """Return billable amount from a payslip.
-
-        For split (allocation-only) payslips, use allocated_* fields.
-        For normal payslips, use the standard computed fields.
-        """
-        if getattr(slip, "split_state", None) == "split":
-            if self.invoice_basis == "net_wage":
-                return float(slip.allocated_net_wage or 0.0)
-            if self.invoice_basis == "gross_wage":
-                return float(slip.allocated_gross_wage or 0.0)
-            return float(slip.allocated_employer_cost or 0.0)
-
         field_name = self.invoice_basis
         return float(getattr(slip, field_name) or 0.0)
 
