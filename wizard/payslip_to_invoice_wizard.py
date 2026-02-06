@@ -150,6 +150,10 @@ class HrPayslipToInvoiceWizard(models.TransientModel):
         return domain
 
     def _amount_from_slip(self, slip):
+        # Billing-only split payslips carry an allocated amount (no payroll recomputation).
+        if getattr(slip, "split_state", "none") == "split" and hasattr(slip, "billing_amount"):
+            return float(slip.billing_amount or 0.0)
+
         field_name = self.invoice_basis
         return float(getattr(slip, field_name) or 0.0)
 

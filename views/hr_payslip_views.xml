@@ -15,6 +15,9 @@
                     <field name="has_multiple_locations" readonly="1" invisible="1"/>
                     <field name="split_needed" readonly="1" invisible="1"/>
                     <field name="split_state" readonly="1"/>
+                    <field name="billing_amount" readonly="1" invisible="split_state != \'split\'"/>
+                    <field name="billing_hours" readonly="1" invisible="split_state != \'split\'"/>
+                    <field name="billing_ratio" readonly="1" invisible="split_state != \'split\'"/>
                     <field name="split_base_id" readonly="1" invisible="1"/>
                 </group>
             </xpath>
@@ -28,7 +31,7 @@
                         invisible="not invoice_id"/>
                 <button name="action_split_by_location"
                         type="object"
-                        string="Split by Location"
+                        string="Split for Billing"
                         class="btn-secondary"
                         icon="fa-sitemap"
                         invisible="not has_multiple_locations or split_state != 'none' or not invoiceable"/>

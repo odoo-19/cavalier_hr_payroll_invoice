@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
-from odoo.fields import Domain
 
 class HrPayslip(models.Model):
     _inherit = "hr.payslip"
@@ -70,7 +69,29 @@ class HrPayslip(models.Model):
         "work_entry_id",
         string="Work Entries (Split Scope)",
         copy=False,
-        help="If set, the payslip computation uses ONLY these work entries. Used when splitting a payslip by location.",
+        help="Work entries associated with this split payslip (for billing traceability). No payroll recomputation is performed.",
+    )
+
+
+    billing_amount = fields.Monetary(
+        string="Billing Amount",
+        currency_field="currency_id",
+        copy=False,
+        readonly=True,
+        help="Billing-only amount allocated to this split payslip. Used for invoicing (no payroll recomputation).",
+    )
+    billing_hours = fields.Float(
+        string="Billing Hours",
+        copy=False,
+        readonly=True,
+        help="Total hours for this location used to compute the billing allocation.",
+    )
+    billing_ratio = fields.Float(
+        string="Billing Ratio",
+        digits=(16, 6),
+        copy=False,
+        readonly=True,
+        help="Allocation ratio (billing_hours / total_hours) used for computing billing_amount.",
     )
 
     has_multiple_locations = fields.Boolean(
@@ -192,45 +213,34 @@ class HrPayslip(models.Model):
         return slips
 
 
-    
-
-    # -------------------------------------------------------------------------
-    # Payroll computation scoping
-    # -------------------------------------------------------------------------
-    def _get_worked_day_lines(self, domain=None):
-        """Scope worked days computation to work_entry_ids when splitting."""
-        self.ensure_one()
-        if self.work_entry_ids:
-            domain = Domain.AND([domain or [], [("id", "in", self.work_entry_ids.ids)]])
-        return super()._get_worked_day_lines(domain=domain)
-
-    def _get_worked_day_lines_values(self, domain=None):
-        """Scope worked days computation to work_entry_ids when splitting."""
-        self.ensure_one()
-        if self.work_entry_ids:
-            domain = Domain.AND([domain or [], [("id", "in", self.work_entry_ids.ids)]])
-        return super()._get_worked_day_lines_values(domain=domain)
-
-
-
     # -------------------------------------------------------------------------
     # Actions
     # -------------------------------------------------------------------------
+    
     def action_split_by_location(self):
-        """Split selected payslip(s) into multiple payslips by location.
+        """Split selected payslip(s) into billing-only split payslips by Location.
 
-        Strategy:
-        - Keep the original payslip generation logic unchanged.
-        - Detect multiple locations via overlapping work entries.
-        - When splitting:
-            * Create one child payslip per location (scoped to that location's work entries).
-            * Remove deductions from all child slips.
-            * Allocate the base slip's deductions to the "largest" child slip only.
-        - Mark the base payslip as not invoiceable (so invoicing uses only split slips).
+        New strategy (billing-only):
+        - The base payslip remains the true payroll document (computed normally).
+        - Split payslips are created PER location and store an allocated Billing Amount only.
+        - Allocation is proportional to Work Entry hours per location over the payslip period.
+        - No payroll recomputation is performed on split payslips (no salary rule evaluation, no deduction juggling).
+
+        Notes:
+        - Requires all work entries in the period to have a Location.
+        - Requires the base payslip to be Validated/Paid to ensure Net Wage is final for billing.
         """
-        PayslipLine = self.env["hr.payslip.line"]
         WorkEntry = self.env["hr.work.entry"]
         new_slips = self.env["hr.payslip"]
+
+    def _we_hours(we):
+        # Prefer native duration when present; otherwise compute from dates.
+        if "duration" in we._fields and we.duration:
+            return float(we.duration)
+        if we.date_start and we.date_stop:
+            delta = fields.Datetime.to_datetime(we.date_stop) - fields.Datetime.to_datetime(we.date_start)
+            return float(delta.total_seconds() / 3600.0)
+        return 0.0
 
         for slip in self:
             if slip.split_state != "none":
@@ -242,7 +252,14 @@ class HrPayslip(models.Model):
             if not slip.employee_id or not slip.date_from or not slip.date_to:
                 raise UserError(_("Payslip must have Employee and Date range before splitting."))
 
-            # Work entries for the payslip period
+            # Billing-only splits should be based on a final net wage
+            if slip.state not in ("validated", "paid"):
+                raise UserError(_("Please validate (or pay) the payslip before splitting for billing-only invoicing."))
+
+            # Ensure base slip is computed so net_wage is available
+            if not slip.line_ids:
+                slip.compute_sheet()
+
             wes = slip._get_overlapping_work_entries()
             if not wes:
                 raise UserError(_("No work entries found for this payslip period."))
@@ -264,24 +281,55 @@ class HrPayslip(models.Model):
                         "This split action is configured to split by Location only."
                     ))
 
-            # Ensure base slip is computed so we can capture deductions for allocation
-            if not slip.line_ids:
-                slip.compute_sheet()
-            base_ded_lines = slip.line_ids.filtered(lambda l: l.total < 0 and l.salary_rule_id)
-
             # Group work entries by location
             groups = {}
+            hours_by_loc = {}
+            total_hours = 0.0
+
             for we in wes:
                 groups.setdefault(we.location_id, WorkEntry)
                 groups[we.location_id] |= we
+                h = _we_hours(we)
+                hours_by_loc[we.location_id] = hours_by_loc.get(we.location_id, 0.0) + h
+                total_hours += h
 
             if len(groups) <= 1:
                 raise UserError(_("This payslip does not have multiple locations to split."))
 
-            split_slips = self.env["hr.payslip"]
+            if total_hours <= 0.0:
+                raise UserError(_("Total work entry hours for this payslip period is 0. Cannot compute proportional split."))
 
-            # Create split slips per location (draft)
-            for location, we_set in groups.items():
+            net = float(slip.net_wage or 0.0)
+            currency = slip.currency_id or slip.company_id.currency_id
+            round_amt = currency.round if currency else (lambda x: x)
+
+            # Compute rounded allocations
+            allocations = []
+            for loc, we_set in groups.items():
+                loc_hours = float(hours_by_loc.get(loc, 0.0))
+                ratio = (loc_hours / total_hours) if total_hours else 0.0
+                raw = net * ratio
+                amt = round_amt(raw)
+                allocations.append({
+                    "location": loc,
+                    "we_set": we_set,
+                    "hours": loc_hours,
+                    "ratio": ratio,
+                    "amount": amt,
+                })
+
+            # Fix rounding so children sum exactly to net (add remainder to largest hours bucket)
+            total_alloc = sum(a["amount"] for a in allocations)
+            remainder = round_amt(net - total_alloc)
+            if remainder:
+                largest = max(allocations, key=lambda a: a["hours"])
+                largest["amount"] = round_amt(largest["amount"] + remainder)
+
+            # Create split slips per location (no compute_sheet)
+            for a in allocations:
+                location = a["location"]
+                we_set = a["we_set"]
+
                 vals = {
                     "customer_id": slip.customer_id.id if slip.customer_id else (we_set[:1].customer_id.id or False),
                     "location_id": location.id,
@@ -289,47 +337,19 @@ class HrPayslip(models.Model):
                     "invoiceable": True,
                     "split_state": "split",
                     "split_base_id": slip.id,
-                    "work_entry_ids": [(6, 0, we_set.ids)],
-                    # clear computed lines; they will be recomputed
+                    "work_entry_ids": [(6, 0, we_set.ids)],  # traceability only
+                    "billing_amount": a["amount"],
+                    "billing_hours": a["hours"],
+                    "billing_ratio": a["ratio"],
+                    # Ensure these billing-only slips don't carry payroll lines
                     "line_ids": False,
                     "worked_days_line_ids": False,
                     "input_line_ids": False,
-                    "state": "draft",
+                    # Keep state aligned with base for invoicing eligibility
+                    "state": slip.state,
                 }
                 child = slip.copy(vals)
-                child.compute_sheet()
-
-                # Remove deductions from child slips; we'll allocate once to the largest split slip
-                child.line_ids.filtered(lambda l: l.total < 0).unlink()
-
-                split_slips |= child
                 new_slips |= child
-
-            # Choose "largest" split slip (by employer cost, fallback to gross wage)
-            largest = split_slips.sorted(
-                lambda s: (s.employer_cost or 0.0, s.gross_wage or 0.0),
-                reverse=True
-            )[:1]
-
-            # Allocate base deductions to the largest split slip only
-            if largest and base_ded_lines:
-                for line in base_ded_lines:
-                    PayslipLine.create({
-                        "slip_id": largest.id,
-                        "salary_rule_id": line.salary_rule_id.id,
-                        "name": line.name,
-                        "code": line.code,
-                        "category_id": line.category_id.id if getattr(line, "category_id", False) else False,
-                        "sequence": getattr(line, "sequence", 0),
-                        "amount": getattr(line, "amount", 0.0),
-                        "quantity": getattr(line, "quantity", 1.0),
-                        "rate": getattr(line, "rate", 100.0),
-                        "total": line.total,
-                    })
-
-            # Validate split slips if base was already validated/paid
-            if slip.state in ("validated", "paid"):
-                split_slips.action_payslip_done()
 
             # Mark base as non-invoiceable
             slip.write({
@@ -349,6 +369,7 @@ class HrPayslip(models.Model):
                 "target": "current",
             }
         return True
+
 
     def action_view_customer_invoice(self):
         self.ensure_one()
