@@ -86,6 +86,37 @@ class HrPayslip(models.Model):
         help="True if this payslip should be split by location before invoicing.",
     )
 
+
+    @api.depends("employee_id", "date_from", "date_to")
+    def _compute_split_flags(self):
+        """Compute split indicators based on overlapping work entries.
+
+        A payslip is flagged when overlapping work entries span more than one
+        distinct location (including missing location).
+        """
+        for slip in self:
+            slip.has_multiple_locations = False
+            slip.split_needed = False
+
+            if not slip.employee_id or not slip.date_from or not slip.date_to:
+                continue
+
+            wes = slip._get_overlapping_work_entries()
+            if not wes:
+                continue
+
+            loc_ids = set()
+            has_blank = False
+            for we in wes:
+                if we.location_id:
+                    loc_ids.add(we.location_id.id)
+                else:
+                    has_blank = True
+
+            distinct = len(loc_ids) + (1 if has_blank else 0)
+            slip.has_multiple_locations = distinct > 1
+            slip.split_needed = slip.has_multiple_locations and slip.invoiceable and slip.split_state == 'none'
+
     @api.depends("invoice_id")
     def _compute_invoiced(self):
         for slip in self:
@@ -258,7 +289,8 @@ class HrPayslip(models.Model):
                 "target": "current",
             }
         return True
-def action_view_customer_invoice(self):
+
+    def action_view_customer_invoice(self):
         self.ensure_one()
         if not self.invoice_id:
             raise UserError(_("No invoice is linked to this payslip."))
