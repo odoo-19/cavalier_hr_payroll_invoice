@@ -11,6 +11,11 @@
                     <field name="location_id"
                            domain="customer_id and [('id', 'child_of', customer_id)] or []"/>
                     <field name="invoice_id" invisible="1"/>
+                    <field name="invoiceable" readonly="1"/>
+                    <field name="has_multiple_locations" readonly="1" invisible="1"/>
+                    <field name="split_needed" readonly="1" invisible="1"/>
+                    <field name="split_state" readonly="1"/>
+                    <field name="split_base_id" readonly="1" invisible="1"/>
                 </group>
             </xpath>
 
@@ -21,7 +26,23 @@
                         class="oe_stat_button"
                         icon="fa-file-text-o"
                         invisible="not invoice_id"/>
+                <button name="action_split_by_location"
+                        type="object"
+                        string="Split by Location"
+                        class="btn-secondary"
+                        icon="fa-sitemap"
+                        invisible="not has_multiple_locations or split_state != 'none' or not invoiceable"/>
             </xpath>
         </field>
     </record>
+
+    <record id="action_hr_payslip_split_by_location" model="ir.actions.server">
+        <field name="name">Split Payslip by Location</field>
+        <field name="model_id" ref="hr_payroll.model_hr_payslip"/>
+        <field name="binding_model_id" ref="hr_payroll.model_hr_payslip"/>
+        <field name="binding_view_types">list,form</field>
+        <field name="state">code</field>
+        <field name="code">records.action_split_by_location()</field>
+    </record>
+
 </odoo>

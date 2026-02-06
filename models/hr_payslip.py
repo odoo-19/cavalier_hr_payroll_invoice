@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
+from odoo.osv import expression
 
 class HrPayslip(models.Model):
     _inherit = "hr.payslip"
@@ -27,6 +28,62 @@ class HrPayslip(models.Model):
         string="Invoiced",
         compute="_compute_invoiced",
         store=True,
+    )
+
+    
+    # -------------------------------------------------------------------------
+    # Split by Location (post-generation)
+    # -------------------------------------------------------------------------
+    invoiceable = fields.Boolean(
+        string="Invoiceable",
+        default=True,
+        help="If False, this payslip must not be used for invoicing (e.g., it has been split).",
+    )
+    split_state = fields.Selection(
+        [
+            ("none", "Not Split"),
+            ("base", "Base (Split)"),
+            ("split", "Split Payslip"),
+        ],
+        default="none",
+        copy=False,
+        readonly=True,
+    )
+    split_base_id = fields.Many2one(
+        "hr.payslip",
+        string="Split Base Payslip",
+        copy=False,
+        readonly=True,
+        help="If this payslip was created by splitting another payslip, this points to the base payslip.",
+    )
+    split_child_ids = fields.One2many(
+        "hr.payslip",
+        "split_base_id",
+        string="Split Payslips",
+        readonly=True,
+    )
+
+    work_entry_ids = fields.Many2many(
+        "hr.work.entry",
+        "hr_payslip_hr_work_entry_rel",
+        "payslip_id",
+        "work_entry_id",
+        string="Work Entries (Split Scope)",
+        copy=False,
+        help="If set, the payslip computation uses ONLY these work entries. Used when splitting a payslip by location.",
+    )
+
+    has_multiple_locations = fields.Boolean(
+        string="Multiple Locations",
+        compute="_compute_split_flags",
+        store=True,
+        help="True if overlapping work entries contain multiple distinct locations (including blank).",
+    )
+    split_needed = fields.Boolean(
+        string="Split Needed",
+        compute="_compute_split_flags",
+        store=True,
+        help="True if this payslip should be split by location before invoicing.",
     )
 
     @api.depends("invoice_id")
@@ -104,7 +161,104 @@ class HrPayslip(models.Model):
         return slips
 
 
-    def action_view_customer_invoice(self):
+    
+
+    # -------------------------------------------------------------------------
+    # Payroll computation scoping
+    # -------------------------------------------------------------------------
+    def _get_worked_day_lines_values(self, domain=None):
+        """Scope worked days computation to work_entry_ids when splitting."""
+        self.ensure_one()
+        if self.work_entry_ids:
+            domain = expression.AND([domain or [], [("id", "in", self.work_entry_ids.ids)]])
+        return super()._get_worked_day_lines_values(domain=domain)
+
+
+    # -------------------------------------------------------------------------
+    # Actions
+    # -------------------------------------------------------------------------
+    def action_split_by_location(self):
+        """Split selected payslip(s) into multiple payslips by location.
+
+        - Keeps current payroll run generation logic.
+        - Uses overlapping work entries to group by location_id.
+        - Marks the base payslip as not invoiceable.
+        """
+        new_slips = self.env["hr.payslip"]
+        for slip in self:
+            if slip.split_state != "none":
+                continue
+            if slip.invoice_id:
+                raise UserError(_("Cannot split a payslip that is already linked to an invoice."))
+            if not slip.employee_id or not slip.date_from or not slip.date_to:
+                raise UserError(_("Payslip must have Employee and Date range before splitting."))
+            wes = slip._get_overlapping_work_entries()
+            if not wes:
+                raise UserError(_("No work entries found for this payslip period."))
+            # Require locations to be set on work entries for accurate split
+            missing_loc = wes.filtered(lambda w: not w.location_id)
+            if missing_loc:
+                raise UserError(_(
+                    "Some work entries in this payslip period have no Location. "
+                    "Please fix work entries first before splitting."
+                ))
+            # Safety: if customer is set, ensure work entries do not contain multiple customers
+            if slip.customer_id:
+                cust_ids = set([(w.customer_id.id or 0) for w in wes])
+                if len(cust_ids) > 1:
+                    raise UserError(_(
+                        "Multiple Customers detected in work entries for this period. "
+                        "This split action is configured to split by Location only."
+                    ))
+
+            groups = {}
+            for we in wes:
+                groups.setdefault(we.location_id, self.env["hr.work.entry"])
+                groups[we.location_id] |= we
+
+            if len(groups) <= 1:
+                raise UserError(_("This payslip does not have multiple locations to split."))
+
+            for location, we_set in groups.items():
+                vals = {
+                    "customer_id": slip.customer_id.id if slip.customer_id else (we_set[:1].customer_id.id or False),
+                    "location_id": location.id,
+                    "invoice_id": False,
+                    "invoiceable": True,
+                    "split_state": "split",
+                    "split_base_id": slip.id,
+                    "work_entry_ids": [(6, 0, we_set.ids)],
+                    # clear computed lines; they will be recomputed
+                    "line_ids": False,
+                    "worked_days_line_ids": False,
+                    "input_line_ids": False,
+                    "state": "draft",
+                }
+                child = slip.copy(vals)
+                child.compute_sheet()
+                # If base was already validated/paid, validate split slips too
+                if slip.state in ("validated", "paid"):
+                    child.action_payslip_done()
+                new_slips |= child
+
+            # Mark base as non-invoiceable
+            slip.write({
+                "invoiceable": False,
+                "split_state": "base",
+            })
+            new_slips |= slip.split_child_ids
+
+        if new_slips:
+            return {
+                "type": "ir.actions.act_window",
+                "name": _("Split Payslips"),
+                "res_model": "hr.payslip",
+                "view_mode": "list,form",
+                "domain": [("id", "in", new_slips.ids)],
+                "target": "current",
+            }
+        return True
+def action_view_customer_invoice(self):
         self.ensure_one()
         if not self.invoice_id:
             raise UserError(_("No invoice is linked to this payslip."))

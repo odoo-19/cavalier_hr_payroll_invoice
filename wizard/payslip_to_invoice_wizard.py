@@ -142,6 +142,7 @@ class HrPayslipToInvoiceWizard(models.TransientModel):
             ("date_to", "<=", self.date_to),
             ("customer_id", "=", self.customer_id.id),
             ("invoice_id", "=", False),
+            ("invoiceable", "=", True),
             ("company_id", "=", self.env.company.id),
         ]
         if self.location_id:
@@ -179,6 +180,10 @@ class HrPayslipToInvoiceWizard(models.TransientModel):
                 raise UserError(
                     _("No eligible payslips found for the given filters (state must be Validated/Paid and not yet invoiced).")
                 )
+
+        not_invoiceable = slips.filtered(lambda s: not s.invoiceable)
+        if not_invoiceable:
+            raise UserError(_("Some selected payslips are marked as not invoiceable (e.g., base payslips after splitting)."))
 
         # ✅ Enforce eligibility rules even for manually selected payslips
         bad_state = slips.filtered(lambda s: s.state not in ("validated", "paid"))
