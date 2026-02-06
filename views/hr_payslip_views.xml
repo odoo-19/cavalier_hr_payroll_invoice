@@ -15,6 +15,9 @@
                     <field name="has_multiple_locations" readonly="1" invisible="1"/>
                     <field name="split_needed" readonly="1" invisible="1"/>
                     <field name="split_state" readonly="1"/>
+                    <field name="allocated_employer_cost" readonly="1" attrs="{'invisible': [('split_state', '!=', 'split')]}"/>
+                    <field name="allocated_gross_wage" readonly="1" attrs="{'invisible': [('split_state', '!=', 'split')]}"/>
+                    <field name="allocated_net_wage" readonly="1" attrs="{'invisible': [('split_state', '!=', 'split')]}"/>
                     <field name="split_base_id" readonly="1" invisible="1"/>
                 </group>
             </xpath>
@@ -43,6 +46,23 @@
         <field name="binding_view_types">list,form</field>
         <field name="state">code</field>
         <field name="code">records.action_split_by_location()</field>
+    </record>
+
+    <record id="view_hr_payslip_tree_inherit_cavalier_alloc" model="ir.ui.view">
+        <field name="name">hr.payslip.tree.inherit.cavalier.alloc</field>
+        <field name="model">hr.payslip</field>
+        <field name="inherit_id" ref="hr_payroll.view_hr_payslip_tree"/>
+        <field name="arch" type="xml">
+            <xpath expr="//tree/field[@name='net_wage']" position="after">
+                <field name="allocated_net_wage" optional="show"/>
+            </xpath>
+            <xpath expr="//tree/field[@name='gross_wage']" position="after">
+                <field name="allocated_gross_wage" optional="show"/>
+            </xpath>
+            <xpath expr="//tree/field[@name='employer_cost']" position="after">
+                <field name="allocated_employer_cost" optional="show"/>
+            </xpath>
+        </field>
     </record>
 
 </odoo>
